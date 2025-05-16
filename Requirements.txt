@@ -1,0 +1,11 @@
+# streamlit             # for the web UI framework :contentReference[oaicite:0]{index=0}
+fastapi               # For creating the API backend
+uvicorn[standard]     # ASGI server to run FastAPI (includes python-multipart)
+python-dotenv         # to load environment variables from .env files :contentReference[oaicite:1]{index=1}
+langchain             # core LangChain framework for LLM workflows :contentReference[oaicite:2]{index=2}
+langchain-openai      # LangChain's OpenAI integration :contentReference[oaicite:3]{index=3}
+chromadb              # Chroma vector store for embeddings persistence :contentReference[oaicite:4]{index=4}
+unstructured          # document loaders and partitioning utilities :contentReference[oaicite:5]{index=5}
+scikit-learn          # clustering (KMeans) and other ML utilities :contentReference[oaicite:6]{index=6}
+numpy                 # numerical operations and array handling :contentReference[oaicite:7]{index=7}
+langchain_community

@@ -1,0 +1,49 @@
+# === Node (React frontend) ===
+# node_modules folder
+/frontend/node_modules/
+/frontend/build/
+/frontend/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+/frontend/.env
+
+# === Python ===
+# Python cache files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Byte-compiled / optimized / DLL files
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.log
+
+# Virtual environment
+/venv/
+
+# Jupyter Notebook checkpoints (if any)
+.ipynb_checkpoints
+
+# Environment variables
+.env
+
+# SQLite files (optional, if local DB shouldn't be committed)
+/*.sqlite3
+*.db
+
+# VS Code
+.vscode/
+
+# MacOS system files
+.DS_Store
+
+# === Chroma Vector Store (auto-generated database files) ===
+/chroma_store/
+
+# === PDF or binary documents (optional, if not needed in Git) ===
+*.pdf
