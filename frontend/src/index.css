@@ -14,4 +14,72 @@ body {
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
-} 
+}
+
+/* Smooth scrolling for the entire page if needed */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom animation for message fade-in */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animation-fadeIn {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+/* Typing indicator dot animations */
+@keyframes bounce_1 {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1.0); }
+}
+@keyframes bounce_2 {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1.0); }
+}
+@keyframes bounce_3 {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1.0); }
+}
+
+.animate-bounce_1 {
+  animation: bounce_1 1.4s infinite ease-in-out both;
+  animation-delay: -0.32s; /* Start slightly offset */
+}
+.animate-bounce_2 {
+  animation: bounce_2 1.4s infinite ease-in-out both;
+  animation-delay: -0.16s; /* Start slightly offset */
+}
+.animate-bounce_3 {
+  animation: bounce_3 1.4s infinite ease-in-out both;
+  /* No delay for the third dot */
+}
+
+/* Custom scrollbar styling (optional, WebKit browsers) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent; /* Or a very subtle color like var(--bg-secondary) */
+}
+::-webkit-scrollbar-thumb {
+  background: #888; /* Adjust color as needed, can use CSS vars */
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #555; /* Adjust color as needed */
+}
+
+/* For Firefox scrollbar (less customizable with pure CSS) */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #888 transparent; /* thumb and track */
+}
+
+/* Add Tailwind animation utility classes if not already present in your tailwind.config.js for animation-delay */
+/* For example, in tailwind.config.js theme.extend.animationDelay: { '200ms': '200ms', '400ms': '400ms' } */
+/* However, the @keyframes approach above directly applies delays. */ 

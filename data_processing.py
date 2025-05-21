@@ -1,25 +1,25 @@
 import os
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any
 import numpy as np
 from sklearn.cluster import KMeans
 from langchain.prompts import PromptTemplate
 from langchain.schema import Document
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores.utils import filter_complex_metadata
+# from langchain_community.vectorstores.utils import filter_complex_metadata # No longer using this
 from utils import get_logger
-from config import CHUNK_SIZE, CHUNK_OVERLAP
+# CHUNK_SIZE, CHUNK_OVERLAP will now be passed as arguments to process_documents
+# from config import CHUNK_SIZE, CHUNK_OVERLAP 
 import uuid
-from langchain.storage import InMemoryStore
 
 logger = get_logger(__name__)
 
 def create_summary(docs: List[Document], llm: ChatOpenAI) -> str:
     summary_prompt_template = PromptTemplate(
-        template="Please provide a concise summary of the following text, focusing on the key points and main ideas:\n\n{text}\n\nSummary:",
+        template="Please provide a concise summary of the following text, focusing on the key points and main ideas:\\n\\n{text}\\n\\nSummary:",
         input_variables=["text"]
     )
-    combined_text = "\n\n".join([doc.page_content for doc in docs])
+    combined_text = "\\n\\n".join([doc.page_content for doc in docs])
     max_summary_input_length = 30000 # Consider moving to config if frequently changed
     if len(combined_text) > max_summary_input_length:
         combined_text = combined_text[:max_summary_input_length]
@@ -92,105 +92,109 @@ def create_raptor_tree(docs: List[Document], llm: ChatOpenAI, local_embedding_mo
         logger.error(f"Error in RAPTOR tree creation: {e}"); 
         return docs # Return original docs on error
 
-def process_documents(
-    raw_docs: List[Document],
-    # Parameters for RAPTOR if we re-enable it:
-    # llm_for_raptor: ChatOpenAI, 
-    # emb_model_for_raptor: OpenAIEmbeddings
-) -> Tuple[List[Document], InMemoryStore]:
-    """
-    Processes raw documents into child documents for vector store and parent documents for a docstore.
-    Implements parent/child chunking.
-    Temporarily bypasses RAPTOR for simplicity in setting up ParentDocumentRetriever.
-    """
-    logger.info(f"Starting parent/child document processing for {len(raw_docs)} raw documents.")
-    parent_doc_store = InMemoryStore()
+def process_documents(raw_docs: List[Document], chunk_size: int, chunk_overlap: int) -> List[Document]:
+    logger.info(f"Starting document processing for {len(raw_docs)} raw documents with chunk_size={chunk_size}, chunk_overlap={chunk_overlap}.")
     all_child_documents = []
-
-    # Define the child splitter here or pass it as an argument
     child_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,  # CHUNK_SIZE from config
-        chunk_overlap=CHUNK_OVERLAP, # CHUNK_OVERLAP from config
+        chunk_size=chunk_size, 
+        chunk_overlap=chunk_overlap, 
         length_function=len,
-        separators=["\n\n", "\n", ". ", "!", "?", ",", " ", ""] # Added space to separators
+        separators=["\\n\\n", "\\n", ". ", "!", "?", ",", " ", ""]
     )
 
     for i, raw_doc in enumerate(raw_docs):
-        parent_id = str(uuid.uuid4())
-        
-        # Prepare metadata for the parent document
-        parent_metadata = {
-            "doc_id": parent_id, # Unique ID for this parent document
-            "source": raw_doc.metadata.get("source", f"unknown_source_{i}"),
-            "file_name": os.path.basename(raw_doc.metadata.get("source", f"unknown_source_{i}")),
-            # TODO: Add more parent-level metadata if available (e.g., document title, subject)
-            # This might require more sophisticated parsing in the loading stage if not in raw_doc.metadata
-        }
-        # Ensure page_content is string
-        parent_page_content = raw_doc.page_content if isinstance(raw_doc.page_content, str) else str(raw_doc.page_content)
-        
-        # Create a Document object first, then filter its metadata
-        parent_doc = Document(page_content=parent_page_content, metadata=parent_metadata.copy())
-        filtered_parent_doc = filter_complex_metadata([parent_doc])[0]
-        parent_doc_store.mset([(parent_id, filtered_parent_doc)])
-        logger.debug(f"Stored parent document {parent_id} from {parent_metadata['file_name']}")
+        raw_doc_source = raw_doc.metadata.get("source", f"unknown_source_{i}")
+        raw_doc_filename = os.path.basename(raw_doc_source)
+        # parent_doc_id for grouping chunks from the same original doc, not for a separate store
+        parent_doc_id_for_grouping = str(uuid.uuid4()) 
 
-        # Split the raw document into child chunks
-        # Ensure raw_doc content is suitable for splitting (it should be a Document object)
-        child_chunks = child_splitter.split_documents([raw_doc]) 
+        child_chunks_from_splitter = child_splitter.split_documents([raw_doc])
+        logger.info(f"Processing '{raw_doc_filename}': Split into {len(child_chunks_from_splitter)} child chunks.")
         
-        temp_child_docs_for_parent = []
-        for child_idx, chunk_doc in enumerate(child_chunks):
-            child_meta = chunk_doc.metadata.copy() if hasattr(chunk_doc, 'metadata') and chunk_doc.metadata is not None else {}
-            child_meta["parent_id"] = parent_id
-            child_meta["original_source"] = parent_metadata["source"] # Keep original source
-            child_meta["file_name"] = parent_metadata["file_name"] # Inherit filename
+        for child_idx, chunk_doc_from_splitter in enumerate(child_chunks_from_splitter):
+            # Start with a fresh, controlled metadata dictionary
+            final_child_meta: Dict[str, Any] = {
+                "source": raw_doc_source,
+                "file_name": raw_doc_filename,
+                "parent_doc_id_group": parent_doc_id_for_grouping 
+            }
 
-            # Extract page number if available from loader (e.g., UnstructuredFileLoader)
-            page_number = child_meta.get("page", child_meta.get("page_number"))
-            if page_number is not None:
-                try:
-                    child_meta['page_label'] = f"p. {int(page_number)}"
-                except ValueError:
-                    child_meta['page_label'] = str(page_number) # if not int-able
+            # Log raw metadata from the splitter for this specific chunk
+            raw_splitter_meta = chunk_doc_from_splitter.metadata or {}
+            logger.debug(f"  Chunk {child_idx} (File: {raw_doc_filename}): Raw metadata from splitter: {raw_splitter_meta}")
+
+            # Determine original document loader type based on available metadata keys if possible
+            # PyMuPDFLoader adds 'file_path', 'page', 'total_pages', 'format', 'title', 'author', etc.
+            # Unstructured typically adds 'source', 'filename', sometimes 'page_number' or 'category'.
+            is_pymupdf_doc = 'file_path' in raw_splitter_meta and 'total_pages' in raw_splitter_meta
+
+            page_number_for_fragment = None # This will be used for the 'page' key in final metadata
+            page_label_display = "" # This will be used for the 'page_label' key (user-facing)
+
+            if is_pymupdf_doc:
+                # PyMuPDFLoader provides 0-indexed 'page'.
+                if 'page' in raw_splitter_meta and raw_splitter_meta['page'] is not None:
+                    try:
+                        page_number_zero_indexed = int(raw_splitter_meta['page'])
+                        page_number_for_fragment = page_number_zero_indexed # Keep 0-indexed for potential fragment use
+                        page_label_display = f"p. {page_number_zero_indexed + 1}" # Display as 1-indexed
+                        logger.debug(f"    PyMuPDF: Extracted page '{page_number_zero_indexed}' (0-indexed). Label: '{page_label_display}'")
+                    except (ValueError, TypeError):
+                        logger.warning(f"    PyMuPDF: Could not parse page from 'page' key (value: '{raw_splitter_meta['page']}').")
+                else:
+                    logger.debug("    PyMuPDF: 'page' key not found in metadata.")
+            else: # Handle UnstructuredFileLoader or other loaders
+                possible_page_keys = ['page_number', 'page', 'page_num', 'pagenum', 'pg_num', 'pg']
+                for key in possible_page_keys:
+                    if key in raw_splitter_meta and raw_splitter_meta[key] is not None:
+                        try:
+                            # Assume these might be 1-indexed or other formats, try to make them page numbers for fragments
+                            # This part might need refinement based on what Unstructured actually provides for non-PDFs
+                            parsed_page = int(raw_splitter_meta[key]) # Attempt to get an int
+                            page_number_for_fragment = parsed_page # Use as is, or adjust if known to be 0/1 indexed
+                            page_label_display = f"p. {parsed_page}" # Assume it's 1-indexed for display if not from PyMuPDF
+                            logger.debug(f"    Unstructured: Extracted page '{parsed_page}' from key '{key}'. Label: '{page_label_display}'")
+                            break 
+                        except (ValueError, TypeError):
+                            page_label_display = f"Page: {raw_splitter_meta[key]} (raw)"
+                            logger.warning(f"    Unstructured: Could not parse page from key '{key}' (value: '{raw_splitter_meta[key]}'). Using raw label: '{page_label_display}'")
+                            # page_number_for_fragment might remain None here if parsing fails
+                            break
             
-            # Add a snippet of chunk_text for easier identification/debugging
-            chunk_content = chunk_doc.page_content if isinstance(chunk_doc.page_content, str) else str(chunk_doc.page_content)
-            child_meta['chunk_preview'] = chunk_content[:100] + "..." if len(chunk_content) > 100 else chunk_content
+            if page_number_for_fragment is None: # Fallback if no page info was extracted by any method
+                # Estimate page based on chunk index. Note: CHUNK_SIZE_FOR_PAGE_ESTIMATE might not be ideal for all loaders.
+                # This estimation is less likely to be hit if PyMuPDF works for PDFs.
+                estimated_page_one_indexed = (child_idx // CHUNK_SIZE_FOR_PAGE_ESTIMATE if CHUNK_SIZE_FOR_PAGE_ESTIMATE > 0 else child_idx // 3) + 1
+                page_number_for_fragment = estimated_page_one_indexed # Or 0-indexed if preferred: estimated_page_one_indexed - 1
+                page_label_display = f"~p. {estimated_page_one_indexed} (est.)"
+                logger.debug(f"    Fallback: No page info extracted, estimated as page {page_number_for_fragment}. Label: '{page_label_display}'")
+
+            # Add to final_child_meta - these are the fields that will go into Chroma
+            if page_number_for_fragment is not None:
+                # The frontend's SourceLink component was seen to use doc.metadata.get('page')
+                # PyMuPDF provides 0-indexed 'page'. Let's store this.
+                final_child_meta['page'] = page_number_for_fragment 
+            if page_label_display: # Should always have some value by now
+                final_child_meta['page_label'] = page_label_display
             
-            # Metadata for structured retrieval (can be expanded)
-            # e.g., child_meta['subject'] = extract_subject(chunk_doc.page_content)
-            # e.g., child_meta['keywords'] = extract_keywords_llm(chunk_doc.page_content, llm_utility)
+            # Add chunk preview to final_child_meta
+            chunk_content = chunk_doc_from_splitter.page_content
+            final_child_meta['chunk_preview'] = chunk_content[:100] + "..." if len(chunk_content) > 100 else chunk_content
+            
+            logger.debug(f"  Chunk {child_idx} (File: {raw_doc_filename}): Final constructed metadata for Chroma: {final_child_meta}")
 
-            temp_doc = Document(page_content=chunk_content, metadata=child_meta.copy())
-            final_child_meta = filter_complex_metadata([temp_doc])[0].metadata
-            processed_child_doc = Document(page_content=chunk_content, metadata=final_child_meta)
-            temp_child_docs_for_parent.append(processed_child_doc)
+            # Create the Document with the carefully constructed metadata
+            doc_for_chroma = Document(page_content=chunk_content, metadata=final_child_meta)
+            all_child_documents.append(doc_for_chroma)
         
-        all_child_documents.extend(temp_child_docs_for_parent)
-        logger.info(f"Processed parent doc {parent_id} ({parent_metadata['file_name']}), created {len(temp_child_docs_for_parent)} child chunks.")
-
-    # --- RAPTOR Integration Point (Optional - currently bypassed) ---
-    # If you want to re-integrate RAPTOR:
-    # 1. It could run on `all_child_documents`.
-    # 2. The output of RAPTOR (summary_docs) would need to ensure `parent_id` is correctly propagated
-    #    or handled if summaries span multiple parents.
-    # 3. The `all_child_documents` to be returned would then be these RAPTOR-processed docs.
-    # Example:
-    # if llm_for_raptor and emb_model_for_raptor and all_child_documents:
-    #     logger.info(f"Applying RAPTOR processing to {len(all_child_documents)} child documents...")
-    #     # You'd need to ensure RAPTOR summaries correctly link back to parent_ids if they are the final child docs
-    #     # This might require modification of create_raptor_tree to accept/use parent_id.
-    #     all_child_documents = create_raptor_tree(all_child_documents, llm_for_raptor, emb_model_for_raptor, max_clusters=5)
-    #     logger.info(f"RAPTOR processing resulted in {len(all_child_documents)} documents for vector store.")
-    # else:
-    #     logger.info("RAPTOR processing skipped (dependencies not provided or no child documents).")
+        logger.info(f"Finished processing source doc '{raw_doc_filename}'.")
 
     if not all_child_documents:
-        logger.warning("No child documents were generated after processing. Returning empty list.")
-        return [], parent_doc_store # Return empty list and the (possibly empty) parent store
+        logger.warning("No child documents were generated. Returning empty list.")
+        return []
 
-    logger.info(f"Total child documents for vector store: {len(all_child_documents)}")
-    logger.info(f"Parent document store contains {len(list(parent_doc_store.yield_keys()))} entries.")
-    
-    return all_child_documents, parent_doc_store 
+    logger.info(f"Total child documents for vector store: {len(all_child_documents)}.")
+    return all_child_documents
+
+# Dummy constant for page estimation, can be refined or made configurable
+CHUNK_SIZE_FOR_PAGE_ESTIMATE = 3 

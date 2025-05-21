@@ -13,7 +13,7 @@ LLM_CHAT_MODEL = "gpt-4o"
 LLM_UTILITY_MODEL = "gpt-4o" # Used for compression and summaries
 CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 400
-TOP_K_RESULTS = 5
+TOP_K_RESULTS = 5 # Restored to original value
 
 # Embedding dimensions (specific to text-embedding-3-large)
 EMBEDDING_DIMENSIONS = 1024 
